@@ -28,6 +28,13 @@ impl Statistics {
         self.sum / self.count as f64
     }
 
+    fn add_measurement(&mut self, measurement: f64) {
+        self.count += 1;
+        self.min = measurement.min(self.min);
+        self.max = measurement.max(self.max);
+        self.sum += measurement;
+    }
+
     fn merge(&mut self, other: &Statistics) {
         self.count += other.count;
         self.min = other.min.min(self.min);
@@ -42,25 +49,22 @@ fn main() -> anyhow::Result<()> {
     let maps: Vec<HashMap<&[u8], Statistics>> = mmap
         .par_split(|b| b == &b'\n')
         .filter(|buf| !buf.is_empty())
-        .map(|buf| {
+        .fold_with(HashMap::<&[u8], Statistics>::new(), |mut map, buf| {
             let pos = buf.iter().position(|b| b == &b';').unwrap();
             let (station, temperature_u8) = buf.split_at(pos);
-            let temperature: f64 = String::from_utf8_lossy(&temperature_u8[1..])
-                .parse()
+            let temperature = std::str::from_utf8(&temperature_u8[1..])
+                .unwrap()
+                .parse::<f64>()
                 .unwrap();
-            (station, Statistics::new(temperature))
+
+            if let Some(stored_stats) = map.get_mut(station) {
+                stored_stats.add_measurement(temperature);
+            } else {
+                let stats = Statistics::new(temperature);
+                map.insert(station, stats);
+            }
+            map
         })
-        .fold_with(
-            HashMap::<&[u8], Statistics>::new(),
-            |mut map, (station, stats)| {
-                if let Some(stored_stats) = map.get_mut(station) {
-                    stored_stats.merge(&stats);
-                } else {
-                    map.insert(station, stats);
-                }
-                map
-            },
-        )
         .collect();
 
     let result: BTreeMap<&[u8], Statistics> = maps
@@ -93,8 +97,10 @@ fn main() -> anyhow::Result<()> {
 
     for (station, stats) in result {
         println!(
-            "{}, count: {}, min: {:.2}, max: {:.2}, avg: {:.2}",
-            String::from_utf8_lossy(station),
+            "{:?}, count: {}, min: {:.2}, max: {:.2}, avg: {:.2}",
+            std::str::from_utf8(station)?,
+            // std::borrow::Cow::Borrowed(station),
+            // String::from_utf8_lossy(station),
             stats.count,
             stats.min,
             stats.max,
