@@ -1,0 +1,106 @@
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs::File,
+};
+
+use memmap::Mmap;
+use rayon::prelude::*;
+
+#[derive(Debug, Clone)]
+struct Statistics {
+    min: f64,
+    max: f64,
+    sum: f64,
+    count: usize,
+}
+
+impl Statistics {
+    fn new(measurement: f64) -> Self {
+        Statistics {
+            min: measurement,
+            max: measurement,
+            sum: measurement,
+            count: 1,
+        }
+    }
+
+    fn average(&self) -> f64 {
+        self.sum / self.count as f64
+    }
+
+    fn merge(&mut self, other: &Statistics) {
+        self.count += other.count;
+        self.min = other.min.min(self.min);
+        self.max = other.max.max(self.max);
+        self.sum += other.sum;
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    let file = File::options().read(true).open("./measurement_data.txt")?;
+    let mmap = unsafe { Mmap::map(&file)? };
+    let maps: Vec<HashMap<&[u8], Statistics>> = mmap
+        .par_split(|b| b == &b'\n')
+        .filter(|buf| !buf.is_empty())
+        .map(|buf| {
+            let pos = buf.iter().position(|b| b == &b';').unwrap();
+            let (station, temperature_u8) = buf.split_at(pos);
+            let temperature: f64 = String::from_utf8_lossy(&temperature_u8[1..])
+                .parse()
+                .unwrap();
+            (station, Statistics::new(temperature))
+        })
+        .fold_with(
+            HashMap::<&[u8], Statistics>::new(),
+            |mut map, (station, stats)| {
+                if let Some(stored_stats) = map.get_mut(station) {
+                    stored_stats.merge(&stats);
+                } else {
+                    map.insert(station, stats);
+                }
+                map
+            },
+        )
+        .collect();
+
+    let result: BTreeMap<&[u8], Statistics> = maps
+        .par_chunks(50)
+        .map(|chunk| {
+            let mut result: BTreeMap<&[u8], Statistics> = BTreeMap::new();
+
+            for map in chunk.into_iter() {
+                map.into_iter().for_each(|(station, stats)| {
+                    if let Some(stored_stats) = result.get_mut(station) {
+                        stored_stats.merge(stats);
+                    } else {
+                        result.insert(station, stats.to_owned());
+                    }
+                });
+            }
+            result
+        })
+        .reduce_with(|mut map_left, map_right| {
+            map_right.into_iter().for_each(|(station, stats)| {
+                if let Some(stored_stats) = map_left.get_mut(station) {
+                    stored_stats.merge(&stats);
+                } else {
+                    map_left.insert(station, stats);
+                }
+            });
+            map_left
+        })
+        .unwrap();
+
+    for (station, stats) in result {
+        println!(
+            "{}, count: {}, min: {:.2}, max: {:.2}, avg: {:.2}",
+            String::from_utf8_lossy(station),
+            stats.count,
+            stats.min,
+            stats.max,
+            stats.average(),
+        );
+    }
+
+    Ok(())
+}
