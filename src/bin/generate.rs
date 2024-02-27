@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let station = STATIONS
             .get(rng.gen_range(0..STATIONS.len()))
             .expect("should be there");
-        let measurement = format!("{};{}\n", station.name, station.measurement());
+        let measurement = format!("{};{:.1}\n", station.name, station.measurement());
         buffer
             .write_all(measurement.as_bytes())
             .expect("should write");
