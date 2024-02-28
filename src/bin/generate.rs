@@ -20,10 +20,9 @@ struct Cli {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let mut rng = rand::thread_rng();
-    // let chunks = cli.lines/10_000_000;
     let mut buffer = BufWriter::new(File::create(cli.out_file)?);
 
-    (0..cli.lines).into_iter().for_each(|_| {
+    (0..cli.lines).for_each(|_| {
         let station = STATIONS
             .get(rng.gen_range(0..STATIONS.len()))
             .expect("should be there");

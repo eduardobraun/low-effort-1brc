@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    fs::File,
-};
+use std::{collections::HashMap, fs::File};
 
 use memmap::Mmap;
 use rayon::prelude::*;
@@ -68,7 +65,7 @@ fn hacky_i16_float_parse(buf: &[u8]) -> i16 {
 fn main() -> anyhow::Result<()> {
     let file = File::options().read(true).open("./measurement_data.txt")?;
     let mmap = unsafe { Mmap::map(&file)? };
-    let maps: Vec<HashMap<&[u8], Statistics>> = mmap
+    let result: HashMap<&[u8], Statistics> = mmap
         .par_split(|b| b == &b'\n')
         .filter(|buf| !buf.is_empty())
         .fold_with(HashMap::<&[u8], Statistics>::new(), |mut map, buf| {
@@ -84,24 +81,6 @@ fn main() -> anyhow::Result<()> {
             }
             map
         })
-        .collect();
-
-    let result: BTreeMap<&[u8], Statistics> = maps
-        .par_chunks(50)
-        .map(|chunk| {
-            let mut result: BTreeMap<&[u8], Statistics> = BTreeMap::new();
-
-            for map in chunk.into_iter() {
-                map.into_iter().for_each(|(station, stats)| {
-                    if let Some(stored_stats) = result.get_mut(station) {
-                        stored_stats.merge(stats);
-                    } else {
-                        result.insert(station, stats.to_owned());
-                    }
-                });
-            }
-            result
-        })
         .reduce_with(|mut map_left, map_right| {
             map_right.into_iter().for_each(|(station, stats)| {
                 if let Some(stored_stats) = map_left.get_mut(station) {
@@ -114,7 +93,10 @@ fn main() -> anyhow::Result<()> {
         })
         .unwrap();
 
-    for (station, stats) in result {
+    let mut sorted: Vec<_> = result.into_iter().collect();
+    sorted.par_sort_by_key(|i| i.0);
+
+    for (station, stats) in sorted {
         println!(
             "{}, count: {}, min: {:.1}, max: {:.1}, avg: {:.1}",
             std::str::from_utf8(station)?,
